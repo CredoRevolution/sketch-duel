@@ -239,5 +239,6 @@ defineExpose({ restart, finish })
 
 canvas {
   display: block;
+  max-width: 100%;
 }
 </style>

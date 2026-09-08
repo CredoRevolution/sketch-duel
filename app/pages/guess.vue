@@ -308,7 +308,10 @@ onBeforeUnmount(() => {
 
 @media (max-width: 900px) {
   .game {
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr), а не 1fr: иначе минимальным размером колонки становится
+       min-content её содержимого — а холст имеет заданную в пикселях ширину,
+       и колонка отказывалась сжиматься при сужении окна. */
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -316,6 +319,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .task {
@@ -398,6 +402,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
 }
 
 .panel {

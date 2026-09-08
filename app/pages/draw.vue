@@ -283,7 +283,10 @@ onBeforeUnmount(() => {
 
 @media (max-width: 900px) {
   .game {
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr), а не 1fr: иначе минимальным размером колонки становится
+       min-content её содержимого — а холст имеет заданную в пикселях ширину,
+       и колонка отказывалась сжиматься при сужении окна. */
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -291,6 +294,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .task {
@@ -364,6 +368,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
 }
 
 .panel {
@@ -379,6 +384,9 @@ onBeforeUnmount(() => {
 }
 
 .guesses {
+  /* Позиционированный родитель обязателен: уходящий элемент списка становится
+     absolute, и без этого он растягивался бы на всю страницу, давая горизонтальный скролл. */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -528,7 +536,8 @@ onBeforeUnmount(() => {
 
 .g-leave-active {
   position: absolute;
-  width: calc(100% - 36px);
+  left: 0;
+  right: 0;
 }
 
 .pop-enter-active {

@@ -235,6 +235,7 @@ defineExpose({ undo, clear, getStrokes, isBlank })
 
 canvas {
   display: block;
+  max-width: 100%;
   cursor: crosshair;
   touch-action: none;
 }
