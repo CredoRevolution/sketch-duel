@@ -1,7 +1,22 @@
+import { fileURLToPath } from 'node:url'
+
+const scssDir = fileURLToPath(new URL('./app/assets/scss', import.meta.url))
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: false },
-  css: ['~/assets/css/main.css'],
+  css: ['~/assets/scss/main.scss'],
+  vite: {
+    css: {
+      preprocessorOptions: {
+        scss: {
+          // Токены и миксины доступны в каждом <style lang="scss"> без импортов.
+          additionalData: '@use "tokens" as *;\n@use "mixins" as *;\n',
+          loadPaths: [scssDir]
+        }
+      }
+    }
+  },
   app: {
     head: {
       htmlAttrs: { lang: 'ru' },
@@ -12,7 +27,7 @@ export default defineNuxtConfig({
           name: 'description',
           content: 'Два режима: нейросеть угадывает твой рисунок или ты угадываешь её.'
         },
-        { name: 'theme-color', content: '#0d0f14' }
+        { name: 'theme-color', content: '#090b11' }
       ]
     }
   },

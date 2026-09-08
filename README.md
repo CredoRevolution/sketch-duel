@@ -1,109 +1,110 @@
 # Sketch Duel
 
-Дуэль каракулей с нейросетью. Два режима:
+A doodle-guessing duel against a neural network. Two modes:
 
-1. **Ты рисуешь — ИИ угадывает.** Выпадает слово, 20 секунд на рисунок. Свёрточного монстра тут нет: в браузер уезжает MLP на 240 КБ, который распознаёт холст в реальном времени и показывает три самых вероятных варианта.
-2. **ИИ рисует — ты угадываешь.** Холст штрих за штрихом воспроизводит настоящий человеческий рисунок из датасета Google QuickDraw. Чем раньше угадаешь — тем больше очков.
+1. **You draw, the AI guesses.** You get a word and a timer. A small neural net watches the canvas and names its three most likely answers.
+2. **The AI draws, you guess.** The canvas replays a real human drawing from Google's QuickDraw dataset, stroke by stroke. The earlier you guess, the more points you score.
 
-Всё работает **целиком в браузере**: бэкенда нет, ни один рисунок никуда не отправляется. Готовая сборка — статика, которую можно положить на поддомен обычным nginx.
+Everything runs **entirely in the browser**. There is no backend, no API call, and no drawing ever leaves the device. The production build is plain static files.
 
-## Быстрый старт
+**Live:** https://draw.gitignore.space
+
+## Quick start
 
 ```bash
 npm install
-npm run data:all   # скачать датасет и обучить модель (~40 минут, один раз)
-npm run verify     # проверить артефакты
+npm run data:all   # download the dataset and train the model (~90 min, once)
+npm run verify     # check the produced artifacts
 npm run dev        # http://localhost:3000
 ```
 
-`data:all` кладёт в репозиторий два артефакта, после чего интернет больше не нужен:
+`data:all` writes two artifacts into the repository, after which no internet access is needed:
 
-- `public/model/model.bin` + `model.json` — веса классификатора (~240 КБ);
-- `public/replay/*.json` — по 60 рисунков на категорию для второго режима (~600 КБ).
+- `public/model/model.bin` + `model.json` — the classifier weights (~300 KB);
+- `public/replay/*.json` — 50 human drawings per category for mode 2 (~2 MB).
 
-## Деплой на Vercel
+## How it works
 
-Репозиторий уже настроен: `vercel.json` задаёт статическую сборку и годовой кэш
-для весов модели и реплеев.
-
-```bash
-vercel login     # интерактивный вход, одноразово
-vercel --prod
+```
+shared/
+  sketch.js       stroke rasterisation to 28x28 — ONE implementation for training and browser
+  model.js        MLP runtime: int8 dequantisation + forward pass
+  categories.js   100 categories with Russian labels and difficulty tiers
+scripts/
+  fetch-data.mjs  pulls QuickDraw slices over HTTP Range, builds the dataset and the replays
+  train.mjs       trains the MLP in plain JS, exports int8 weights
+  verify.mjs      checks the artifacts using the exact runtime the browser executes
+app/
+  components/SketchPad.vue      drawing canvas (pointer events, undo, smoothing)
+  components/ReplayCanvas.vue   stroke player
+  composables/                  model loading, replay loading, difficulty settings
+  pages/                        index, draw (mode 1), guess (mode 2)
 ```
 
-Имя проекта станет поддоменом: `sketch-duel` -> `sketch-duel.vercel.app`.
-Либо то же самое через панель Vercel: **Add New -> Project -> Import** этого
-репозитория, настройки подхватятся из `vercel.json`.
+A detailed walkthrough in Russian lives in [`docs/HOW-IT-WORKS.ru.md`](docs/HOW-IT-WORKS.ru.md).
 
-Зависимости ставятся через `npm install`, а не `npm ci`: на этом дереве
-`npm ci` отвергает любой сгенерированный lock-файл (баг npm с опциональными
-нативными пакетами `@emnapi/*`).
+### Shared preprocessing
 
-## Деплой на свой сервер
+The most common reason a model like this "feels stupid" is a mismatch between how drawings were prepared during training and how they are prepared in production. Here `shared/sketch.js` is called both by `fetch-data.mjs` and by the browser, so the mismatch is impossible by construction.
+
+Rasterisation: normalise by bounding box preserving aspect ratio → draw into 112×112 with a soft pen and max blending → average 4×4 blocks down to 28×28. The pipeline is invariant to scale, translation and device pixel ratio.
+
+### The model
+
+An MLP of `784 → 256 → 128 → 100` with ReLU, dropout and Adam. Training runs in plain JS on `Float32Array`, with no Python and no native modules, so the whole project reproduces with a single `npm run data:all`.
+
+Weights are quantised to int8 with a per-output-neuron scale. `npm run verify` asserts that quantisation did not cost accuracy.
+
+### Difficulty
+
+Difficulty never swaps the model. It changes which categories are drawn from, how confident the network must be to accept a drawing, how often it is allowed to look at the canvas, and how many consecutive confident checks it needs before it may answer.
+
+| Level | Words | Confidence | Round | Look every | Streak |
+|---|---|---|---|---|---|
+| Easy | 30 | 45% | 25 s | 400 ms | 2 |
+| Normal | 65 | 62% | 20 s | 550 ms | 3 |
+| Hard | 100 | 75% | 15 s | 700 ms | 3 |
+
+## Deployment
+
+The repository is connected to Vercel; every push to `main` deploys automatically.
 
 ```bash
-npm run generate      # статика в .output/public
+npm run generate   # static output in .output/public
 ```
 
-Дальше — любой статический хостинг. Пример nginx:
+The output is plain static files, so any static host works. Example nginx config:
 
 ```nginx
 server {
-    server_name sketch.example.com;
+    server_name draw.example.com;
     root /var/www/sketch-duel;
     location / { try_files $uri $uri/ /index.html; }
     location ~* \.(bin|json)$ { gzip on; expires 30d; }
 }
 ```
 
-Модель и реплеи — обычные статические файлы, их полезно отдавать с `gzip` и долгим кэшем.
+Dependencies are installed with `npm install` rather than `npm ci`: on this dependency tree `npm ci` rejects every generated lock file, an npm bug involving the optional native `@emnapi/*` packages.
 
-## Как это устроено
+Local build output is excluded through `.vercelignore`. Without it, a locally built `.output` gets uploaded alongside the remote build, the client bundle and the app manifest end up coming from two different builds, and client-side routing silently stops working.
 
-```
-shared/
-  sketch.js       растеризация штрихов в 28x28 — ОДИН код для обучения и браузера
-  model.js        рантайм MLP: деквантование int8 + прямой проход
-  categories.js   30 категорий с русскими подписями
-scripts/
-  fetch-data.mjs  качает куски QuickDraw по HTTP Range, готовит выборку и реплеи
-  train.mjs       обучение MLP на чистом JS, экспорт int8-весов
-  verify.mjs      проверка артефактов тем же рантаймом, что и в браузере
-app/
-  components/SketchPad.vue      холст для рисования (pointer events, undo, сглаживание)
-  components/ReplayCanvas.vue   проигрыватель штрихов
-  pages/                        index, draw (режим 1), guess (режим 2)
-```
+## Scripts
 
-### Ключевое решение: общий препроцессинг
-
-Самая частая причина «модель тупая» — расхождение между тем, как рисунок готовили при обучении, и тем, как его готовят в проде. Здесь `shared/sketch.js` вызывается и из `fetch-data.mjs`, и из браузера, так что расхождение невозможно по построению.
-
-Растеризация: нормализация по bbox с сохранением пропорций → отрисовка в 112×112 с мягким пером и max-блендингом → усреднение блоков 4×4 в 28×28. Такой пайплайн инвариантен к масштабу, сдвигу и плотности пикселей экрана.
-
-### Модель
-
-MLP `784 → 256 → 128 → 30`, ReLU, dropout 0.15, Adam. Обучение — на чистом JS с Float32Array, никаких Python и нативных модулей: проект целиком собирается одним `npm run data:all`.
-
-Веса квантованы в int8 со своей шкалой на каждый выходной нейрон. `npm run verify` отдельно проверяет, что квантование не уронило точность.
-
-## Скрипты
-
-| Команда | Что делает |
+| Command | Purpose |
 |---|---|
-| `npm run dev` | дев-сервер |
-| `npm run generate` | статическая сборка в `.output/public` |
-| `npm run data:fetch` | скачать датасет и подготовить выборку |
-| `npm run data:train` | обучить модель и экспортировать веса |
-| `npm run verify` | проверить артефакты (точность, реплеи, растеризатор) |
+| `npm run dev` | dev server |
+| `npm run generate` | static build into `.output/public` |
+| `npm run data:fetch` | download the dataset and build the training set |
+| `npm run data:train` | train the model and export the weights |
+| `npm run verify` | check the artifacts (accuracy, replays, rasteriser) |
 
-Параметры подкручиваются через переменные окружения:
+Tunable through environment variables:
 
 ```bash
-N_TRAIN=4000 AUG_COPIES=2 npm run data:fetch
+N_TRAIN=3000 AUG_COPIES=2 npm run data:fetch
 H1=384 EPOCHS=20 npm run data:train
 ```
 
-## Данные
+## Data
 
-[Google QuickDraw Dataset](https://github.com/googlecreativelab/quickdraw-dataset), лицензия CC BY 4.0. Скрипт качает только нужные куски файлов через HTTP Range — полные `.ndjson` весят по 50–150 МБ каждый.
+[Google QuickDraw Dataset](https://github.com/googlecreativelab/quickdraw-dataset), licensed CC BY 4.0. The fetch script only pulls the slices it needs over HTTP Range — the full `.ndjson` files are 50–150 MB each.

@@ -1,0 +1,73 @@
+@use 'tokens' as *;
+
+// Медиазапросы: @include upto($bp-md) { ... }
+@mixin upto($bp) {
+  @media (max-width: $bp) {
+    @content;
+  }
+}
+
+@mixin from($bp) {
+  @media (min-width: $bp + 1px) {
+    @content;
+  }
+}
+
+// Поверхность карточки: подложка + тонкая рамка + внутренний блик сверху.
+@mixin surface($pad: 20px) {
+  position: relative;
+  padding: $pad;
+  background: linear-gradient(180deg, $surface, $bg);
+  border: 1px solid $line;
+  border-radius: $r-lg;
+  box-shadow: $sh-md;
+}
+
+// Блик по верхней кромке — придаёт карточкам объём.
+@mixin top-sheen {
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+    pointer-events: none;
+  }
+}
+
+// Заметное кольцо фокуса — доступность с клавиатуры.
+@mixin focus-ring {
+  &:focus-visible {
+    outline: 2px solid $violet-2;
+    outline-offset: 2px;
+  }
+}
+
+// Однострочный текст с многоточием.
+@mixin ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// Заголовок секции: мелкий, разрядка, приглушённый.
+@mixin eyebrow {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: $text-3;
+}
+
+// Холст в стиле бумаги в клетку.
+@mixin paper-surface {
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px) 0 0 / 100% 28px,
+    linear-gradient(90deg, rgba(0, 0, 0, 0.035) 1px, transparent 1px) 0 0 / 28px 100%,
+    radial-gradient(120% 100% at 50% 0%, #fffdf8 0%, $paper 70%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14),
+    inset 0 -40px 60px -40px rgba(120, 100, 60, 0.25),
+    $sh-lg;
+}

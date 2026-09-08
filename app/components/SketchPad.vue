@@ -198,7 +198,7 @@ defineExpose({ undo, clear, getStrokes, isBlank })
 </script>
 
 <template>
-  <div ref="holder" class="pad" :class="{ disabled }">
+  <div ref="holder" class="pad" :class="{ 'is-disabled': disabled }">
     <canvas
       ref="canvas"
       @pointerdown="onDown"
@@ -211,26 +211,24 @@ defineExpose({ undo, clear, getStrokes, isBlank })
   </div>
 </template>
 
-<style scoped>
+<style lang="scss" scoped>
 .pad {
   position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 14px;
+  // Не даём холсту вытеснить кнопки за пределы экрана на ноутбуке.
+  max-width: min(100%, 62vh);
+  margin: 0 auto;
+
+  border-radius: $r-lg;
   overflow: hidden;
-  background:
-    linear-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px) 0 0 / 100% 28px,
-    linear-gradient(90deg, rgba(0, 0, 0, 0.035) 1px, transparent 1px) 0 0 / 28px 100%,
-    var(--paper);
-  box-shadow:
-    inset 0 0 0 1px rgba(0, 0, 0, 0.12),
-    0 14px 40px rgba(0, 0, 0, 0.45);
   touch-action: none;
   user-select: none;
-}
+  @include paper-surface;
 
-.pad.disabled {
-  filter: saturate(0.6) brightness(0.85);
+  &.is-disabled {
+    filter: saturate(0.55) brightness(0.82);
+  }
 }
 
 canvas {
@@ -238,19 +236,19 @@ canvas {
   max-width: 100%;
   cursor: crosshair;
   touch-action: none;
-}
 
-.pad.disabled canvas {
-  cursor: default;
+  .is-disabled & {
+    cursor: default;
+  }
 }
 
 .hint {
   position: absolute;
-  inset: auto 0 14px;
+  inset: auto 0 16px;
   text-align: center;
-  color: #b3ab97;
   font-size: 14px;
-  pointer-events: none;
   font-weight: 600;
+  color: #b8ae97;
+  pointer-events: none;
 }
 </style>

@@ -1,11 +1,10 @@
 <script setup>
 /**
  * Режим 2: холст проигрывает настоящий человеческий рисунок из QuickDraw
- * штрих за штрихом, игрок угадывает по четырём вариантам.
+ * штрих за штрихом, игрок угадывает по вариантам ответа.
  * Чем раньше ответ — тем больше очков.
  */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { CATEGORIES } from '~~/shared/categories.js'
 
 useHead({ title: 'ИИ рисует — ты угадываешь · Sketch Duel' })
 
@@ -13,9 +12,10 @@ const MAX_POINTS = 100
 const MIN_POINTS = 30
 const WRONG_PENALTY = 25
 const MAX_WRONG = 2
-const GRACE_MS = 10000 // время на ответ после того, как рисунок дорисован
+const GRACE_MS = 10000
 
 const replay = useReplay()
+const { difficultyId, difficulty, pool, setDifficulty } = useGameSettings()
 const canvas = ref(null)
 
 const state = ref('loading') // loading | playing | won | lost | error
@@ -39,10 +39,16 @@ let graceTimer = null
 let graceStartedAt = 0
 let hiddenAt = 0
 
+const playing = computed(() => state.value === 'playing')
 const points = computed(() => {
   const base = MAX_POINTS - (MAX_POINTS - MIN_POINTS) * Math.min(1, progress.value)
   return Math.max(0, Math.round(base - wrongKeys.value.length * WRONG_PENALTY))
 })
+const barWidth = computed(() =>
+  finishedDrawing.value && playing.value
+    ? (graceLeft.value / GRACE_MS) * 100
+    : Math.min(100, progress.value * 100)
+)
 
 function shuffle(a) {
   const r = [...a]
@@ -54,18 +60,18 @@ function shuffle(a) {
 }
 
 function pickCategory() {
-  const pool = CATEGORIES.filter((c) => !recentCats.includes(c.key))
-  const c = pool[Math.floor(Math.random() * pool.length)]
+  const list = pool.value
+  const free = list.filter((c) => !recentCats.includes(c.key))
+  const from = free.length ? free : list
+  const c = from[Math.floor(Math.random() * from.length)]
   recentCats.push(c.key)
-  if (recentCats.length > 8) recentCats.shift()
+  if (recentCats.length > Math.min(12, Math.floor(list.length / 2))) recentCats.shift()
   return c
 }
 
 function stopGrace() {
-  if (graceTimer) {
-    clearInterval(graceTimer)
-    graceTimer = null
-  }
+  if (graceTimer) clearInterval(graceTimer)
+  graceTimer = null
 }
 
 async function startRound() {
@@ -77,15 +83,17 @@ async function startRound() {
   wrongKeys.value = []
   try {
     const cat = pickCategory()
-    const distractors = shuffle(CATEGORIES.filter((c) => c.key !== cat.key)).slice(0, 3)
+    const others = shuffle(pool.value.filter((c) => c.key !== cat.key)).slice(
+      0,
+      difficulty.value.options - 1
+    )
     const { drawing: d, id } = await replay.randomDrawing(cat.key, seen)
     seen.add(id)
     answer.value = cat
-    options.value = shuffle([cat, ...distractors])
+    options.value = shuffle([cat, ...others])
     drawing.value = d
     state.value = 'playing'
-    // Заранее тянем следующие категории, чтобы между раундами не было паузы.
-    replay.prefetch(shuffle(CATEGORIES).slice(0, 3).map((c) => c.key))
+    replay.prefetch(shuffle(pool.value).slice(0, 3).map((c) => c.key))
   } catch (e) {
     loadError.value = e.message || String(e)
     state.value = 'error'
@@ -97,7 +105,7 @@ function onProgress(p) {
 }
 
 function onDone() {
-  if (state.value !== 'playing') return
+  if (!playing.value) return
   finishedDrawing.value = true
   graceStartedAt = Date.now()
   hiddenAt = 0
@@ -113,11 +121,11 @@ function onDone() {
 }
 
 function choose(cat) {
-  if (state.value !== 'playing' || wrongKeys.value.includes(cat.key)) return
+  if (!playing.value || wrongKeys.value.includes(cat.key)) return
   if (cat.key === answer.value.key) {
     stopGrace()
     lastPoints.value = points.value
-    score.value += points.value
+    score.value += lastPoints.value
     wins.value++
     rounds.value++
     streak.value++
@@ -138,7 +146,6 @@ function lose() {
   canvas.value?.finish()
 }
 
-/** Скрытая вкладка не должна съедать время на ответ. */
 function onVisibility() {
   if (document.hidden) {
     hiddenAt = Date.now()
@@ -149,7 +156,8 @@ function onVisibility() {
 }
 
 function onKey(e) {
-  if (state.value === 'playing') {
+  if (e.target instanceof HTMLElement && ['INPUT', 'BUTTON', 'A'].includes(e.target.tagName)) return
+  if (playing.value) {
     const n = Number(e.key)
     if (n >= 1 && n <= options.value.length) {
       e.preventDefault()
@@ -161,6 +169,11 @@ function onKey(e) {
     e.preventDefault()
     startRound()
   }
+}
+
+function changeDifficulty(id) {
+  setDifficulty(id)
+  startRound()
 }
 
 onMounted(() => {
@@ -178,211 +191,214 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="wrap">
-    <header class="topbar">
-      <NuxtLink to="/" class="brand"><span class="dot" /> Sketch Duel</NuxtLink>
-      <div class="spacer" />
-      <span class="pill">🏆 {{ score }}</span>
-      <span class="pill">🔥 серия {{ streak }}</span>
-      <span class="pill">{{ wins }} / {{ rounds }}</span>
-      <NuxtLink to="/draw" class="btn ghost">Другой режим</NuxtLink>
-    </header>
+    <AppHeader mode="guess">
+      <span class="pill">🏆 <b>{{ score }}</b></span>
+      <span class="pill">🔥 <b>{{ streak }}</b></span>
+      <span class="pill">✅ <b>{{ wins }}/{{ rounds }}</b></span>
+    </AppHeader>
 
-    <div v-if="state === 'error'" class="card err">
+    <div v-if="state === 'error'" class="card notice">
       <h3>Не удалось загрузить рисунки</h3>
       <p class="muted">{{ loadError }}</p>
-      <p class="muted">Собери данные командой <code>npm run data:all</code> и перезагрузи страницу.</p>
+      <p class="dim">Собери данные командой <code>npm run data:all</code> и обнови страницу.</p>
     </div>
 
     <div v-else class="game">
-      <div class="left">
+      <div class="game__main">
         <div class="task card">
-          <div>
-            <div class="task-label">что это будет?</div>
-            <div class="task-word">
-              <template v-if="state === 'won'">{{ answer.emoji }} {{ answer.ru }}</template>
-              <template v-else-if="state === 'lost'">это был {{ answer.emoji }} {{ answer.ru }}</template>
+          <div class="task__word">
+            <div class="task__label">что это будет?</div>
+            <div class="task__value">
+              <template v-if="state === 'won' || state === 'lost'">
+                <span aria-hidden="true">{{ answer?.emoji }}</span> {{ answer?.ru }}
+              </template>
               <template v-else>рисую…</template>
             </div>
           </div>
-          <div class="points" :class="{ low: points <= 40 }">
-            +{{ state === 'playing' ? points : lastPoints }}<small>очк</small>
+          <div class="pts" :class="{ 'is-low': points <= 40 }">
+            +{{ playing ? points : lastPoints }}<small>очк</small>
           </div>
         </div>
-        <div class="timebar" :class="{ grace: finishedDrawing && state === 'playing' }">
-          <i
-            :style="{
-              width:
-                (finishedDrawing && state === 'playing'
-                  ? (graceLeft / GRACE_MS) * 100
-                  : Math.min(100, progress * 100)) + '%'
-            }"
-          />
+
+        <div class="bar" :class="{ 'is-grace': finishedDrawing && playing }">
+          <i :style="{ width: barWidth + '%' }" />
         </div>
 
         <ReplayCanvas
           ref="canvas"
           :drawing="drawing"
-          :paused="state !== 'playing'"
+          :paused="!playing"
+          :speed="difficulty.replaySpeed"
           @progress="onProgress"
           @done="onDone"
         />
 
         <div class="tools">
-          <span v-if="state === 'playing' && finishedDrawing" class="pill warn">
+          <span v-if="playing && finishedDrawing" class="pill pill--warn">
             ⏳ осталось {{ (graceLeft / 1000).toFixed(1) }} с
           </span>
-          <span v-else-if="state === 'playing'" class="pill">
-            очки тают по мере того, как рисунок проявляется
-          </span>
+          <span v-else-if="playing" class="pill dim">очки тают, пока рисунок проявляется</span>
           <div class="spacer" />
-          <button v-if="state === 'playing'" class="btn ghost" @click="lose">Сдаюсь →</button>
-          <button v-else-if="state !== 'loading'" class="btn primary" @click="startRound">
+          <button v-if="playing" class="btn btn--ghost" @click="lose">Сдаюсь</button>
+          <button
+            v-else-if="state !== 'loading'"
+            class="btn btn--primary btn--lg"
+            @click="startRound"
+          >
             Следующий раунд →
           </button>
         </div>
       </div>
 
-      <aside class="right">
+      <aside class="game__side">
         <div class="card panel">
-          <h3>Варианты</h3>
+          <h3 class="panel__title">Варианты</h3>
           <div class="opts">
             <button
               v-for="(o, i) in options"
               :key="o.key"
               class="opt"
               :class="{
-                wrong: wrongKeys.includes(o.key),
-                right: state !== 'playing' && o.key === answer?.key,
-                dim: state !== 'playing' && o.key !== answer?.key
+                'is-wrong': wrongKeys.includes(o.key),
+                'is-right': !playing && o.key === answer?.key,
+                'is-dim': !playing && o.key !== answer?.key
               }"
-              :disabled="state !== 'playing' || wrongKeys.includes(o.key)"
+              :disabled="!playing || wrongKeys.includes(o.key)"
               @click="choose(o)"
             >
-              <span class="kbd">{{ i + 1 }}</span>
-              <span class="emoji">{{ o.emoji }}</span>
-              <span class="label">{{ o.ru }}</span>
+              <span class="opt__kbd">{{ i + 1 }}</span>
+              <span class="opt__emoji" aria-hidden="true">{{ o.emoji }}</span>
+              <span class="opt__label">{{ o.ru }}</span>
             </button>
           </div>
-          <p class="muted tiny">
-            Ошибок осталось: {{ Math.max(0, MAX_WRONG - wrongKeys.length) }} · каждая минус
-            {{ WRONG_PENALTY }} очков · клавиши 1–4
+          <p class="opts__hint dim">
+            Ошибок осталось: <b>{{ Math.max(0, MAX_WRONG - wrongKeys.length) }}</b> · каждая минус
+            {{ WRONG_PENALTY }} очков · клавиши 1–{{ options.length }}
           </p>
         </div>
 
         <Transition name="pop">
-          <div v-if="state === 'won'" class="card verdict win">
-            <div class="big">🎯</div>
+          <div v-if="state === 'won'" class="card verdict verdict--win">
+            <div class="verdict__ico" aria-hidden="true">🎯</div>
             <h3>В точку!</h3>
-            <p class="muted">+{{ lastPoints }} очков. Серия: {{ streak }}.</p>
-            <button class="btn primary" @click="startRound">Ещё раз</button>
+            <p class="muted"><b>+{{ lastPoints }}</b> очков. Серия: {{ streak }}.</p>
+            <button class="btn btn--primary" @click="startRound">Ещё раз</button>
           </div>
-          <div v-else-if="state === 'lost'" class="card verdict lose">
-            <div class="big">🙈</div>
+          <div v-else-if="state === 'lost'" class="card verdict verdict--lose">
+            <div class="verdict__ico" aria-hidden="true">🙈</div>
             <h3>Мимо</h3>
             <p class="muted">Это был {{ answer?.emoji }} {{ answer?.ru }}.</p>
-            <button class="btn primary" @click="startRound">Дальше</button>
+            <button class="btn btn--primary" @click="startRound">Дальше</button>
           </div>
         </Transition>
 
-        <div class="card panel meta">
-          <div class="row">
-            <span class="muted">откуда рисунки</span><b>QuickDraw</b>
+        <div class="card panel">
+          <h3 class="panel__title">Сложность</h3>
+          <DifficultyPicker
+            :model-value="difficultyId"
+            compact
+            @update:model-value="changeDifficulty"
+          />
+          <div class="rows">
+            <div class="row"><span class="dim">слов в игре</span><b>{{ pool.length }}</b></div>
+            <div class="row">
+              <span class="dim">вариантов ответа</span><b>{{ difficulty.options }}</b>
+            </div>
+            <div class="row"><span class="dim">откуда рисунки</span><b>QuickDraw</b></div>
+            <div class="row"><span class="dim">клавиши</span><b>1–{{ difficulty.options }} · Пробел</b></div>
           </div>
-          <div class="row">
-            <span class="muted">рисунков в базе</span><b>{{ CATEGORIES.length * 60 }}</b>
-          </div>
-          <div class="row"><span class="muted">горячие клавиши</span><b>1–4, Пробел</b></div>
         </div>
       </aside>
     </div>
   </div>
 </template>
 
-<style scoped>
+<style lang="scss" scoped>
 .game {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.75fr);
   gap: 20px;
   align-items: start;
-}
 
-@media (max-width: 900px) {
-  .game {
-    /* minmax(0, 1fr), а не 1fr: иначе минимальным размером колонки становится
-       min-content её содержимого — а холст имеет заданную в пикселях ширину,
-       и колонка отказывалась сжиматься при сужении окна. */
+  @include upto($bp-md) {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.left {
+.game__main {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.game__side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   min-width: 0;
 }
 
 .task {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
-  gap: 12px;
+  gap: 16px;
+  padding: 16px 20px;
+
+  &__word {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__label {
+    @include eyebrow;
+    margin: 0 0 3px;
+  }
+
+  &__value {
+    font-size: clamp(23px, 4vw, 31px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    @include ellipsis;
+  }
 }
 
-.task-label {
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.task-word {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-}
-
-.points {
+.pts {
+  flex: none;
   font-size: 28px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-  color: var(--good);
+  color: $green;
+
+  &.is-low {
+    color: $amber;
+  }
+
+  small {
+    margin-left: 3px;
+    font-size: 12px;
+    color: $text-3;
+  }
 }
 
-.points.low {
-  color: var(--accent-2);
-}
-
-.points small {
-  font-size: 13px;
-  color: var(--muted);
-  margin-left: 3px;
-}
-
-.timebar {
-  height: 5px;
-  border-radius: 4px;
-  background: var(--panel-2);
+.bar {
+  height: 6px;
+  border-radius: $r-full;
+  background: $surface-2;
   overflow: hidden;
-}
 
-.timebar i {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-}
+  i {
+    display: block;
+    height: 100%;
+    border-radius: $r-full;
+    background: $grad-accent;
+  }
 
-/* Когда рисунок дорисован, та же полоска показывает остаток времени на ответ. */
-.timebar.grace {
-  height: 7px;
-}
-
-.timebar.grace i {
-  background: var(--bad);
-  transition: width 0.1s linear;
+  // Когда рисунок дорисован, та же полоска показывает остаток времени на ответ.
+  &.is-grace i {
+    background: $red;
+    transition: width 0.1s linear;
+  }
 }
 
 .tools {
@@ -390,144 +406,148 @@ onBeforeUnmount(() => {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  min-height: 42px;
-}
-
-.pill.warn {
-  border-color: rgba(255, 176, 32, 0.5);
-  color: var(--accent-2);
-}
-
-.right {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
+  min-height: 40px;
 }
 
 .panel {
-  padding: 18px;
-}
+  padding: 20px;
 
-.panel h3 {
-  margin: 0 0 14px;
-  font-size: 13px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
+  &__title {
+    @include eyebrow;
+  }
 }
 
 .opts {
   display: flex;
   flex-direction: column;
   gap: 9px;
+
+  &__hint {
+    margin: 14px 0 0;
+    font-size: 12px;
+    line-height: 1.55;
+  }
 }
 
 .opt {
   display: grid;
-  grid-template-columns: 22px 26px 1fr;
+  grid-template-columns: 22px 24px 1fr;
   align-items: center;
   gap: 10px;
   padding: 13px 14px;
-  border-radius: 11px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  border-radius: $r-md;
+  border: 1px solid $line;
+  background: $surface-2;
   text-align: left;
   font-weight: 600;
-  font-size: 15.5px;
-  transition: 0.15s;
-}
+  font-size: 15px;
+  transition: all $fast $ease;
+  @include focus-ring;
 
-.opt:hover:not(:disabled) {
-  background: #2a3450;
-  border-color: #46527a;
-  transform: translateX(2px);
-}
+  &:hover:not(:disabled) {
+    background: $surface-3;
+    border-color: $line-2;
+    transform: translateX(3px);
+  }
 
-.opt .kbd {
-  font-size: 11px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  text-align: center;
-  padding: 1px 0;
-}
+  &:disabled {
+    cursor: default;
+  }
 
-.opt .emoji {
-  font-size: 18px;
-}
+  &__kbd {
+    padding: 1px 0;
+    border: 1px solid $line;
+    border-radius: 5px;
+    font-size: 11px;
+    text-align: center;
+    color: $text-3;
+  }
 
-.opt.wrong {
-  background: rgba(255, 93, 108, 0.12);
-  border-color: rgba(255, 93, 108, 0.4);
-  text-decoration: line-through;
-  opacity: 0.65;
-  animation: shake 0.3s;
-}
+  &__emoji {
+    font-size: 18px;
+  }
 
-.opt.right {
-  background: rgba(47, 212, 122, 0.16);
-  border-color: rgba(47, 212, 122, 0.5);
-  opacity: 1;
-}
+  &__label {
+    @include ellipsis;
+  }
 
-.opt.dim:disabled {
-  opacity: 0.35;
-}
+  &.is-wrong {
+    background: rgba(251, 113, 133, 0.12);
+    border-color: rgba(251, 113, 133, 0.4);
+    text-decoration: line-through;
+    opacity: 0.6;
+    animation: shake 0.3s;
+  }
 
-.opt:disabled {
-  cursor: default;
-}
+  &.is-right {
+    background: rgba(52, 211, 153, 0.16);
+    border-color: rgba(52, 211, 153, 0.5);
+    opacity: 1;
+  }
 
-.tiny {
-  font-size: 12px;
-  margin: 14px 0 0;
-  line-height: 1.5;
+  &.is-dim:disabled {
+    opacity: 0.32;
+  }
 }
 
 .verdict {
-  padding: 20px;
+  padding: 22px;
   text-align: center;
+
+  &__ico {
+    font-size: 40px;
+    line-height: 1;
+  }
+
+  h3 {
+    margin: 8px 0 5px;
+    font-size: 20px;
+  }
+
+  p {
+    margin: 0 0 15px;
+    font-size: 14px;
+  }
+
+  &--win {
+    box-shadow: $sh-md, inset 0 0 0 1px rgba(52, 211, 153, 0.4);
+  }
+
+  &--lose {
+    box-shadow: $sh-md, inset 0 0 0 1px rgba(251, 113, 133, 0.35);
+  }
 }
 
-.verdict .big {
-  font-size: 40px;
+.rows {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid $line;
 }
 
-.verdict h3 {
-  margin: 6px 0 4px;
-  font-size: 20px;
-}
-
-.verdict p {
-  margin: 0 0 14px;
-  font-size: 14px;
-}
-
-.verdict.win {
-  box-shadow: inset 0 0 0 1px rgba(47, 212, 122, 0.4);
-}
-
-.verdict.lose {
-  box-shadow: inset 0 0 0 1px rgba(255, 93, 108, 0.35);
-}
-
-.meta .row {
+.row {
   display: flex;
   justify-content: space-between;
-  padding: 7px 0;
-  font-size: 13.5px;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
 }
 
-.err {
-  padding: 26px;
-}
+.notice {
+  padding: 28px;
 
-.err h3 {
-  margin: 0 0 8px;
+  h3 {
+    margin-bottom: 8px;
+  }
+
+  code {
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: $surface-3;
+    font-size: 12.5px;
+  }
 }
 
 .pop-enter-active {
-  animation: pop 0.28s ease;
+  animation: pop $med $ease;
 }
 </style>

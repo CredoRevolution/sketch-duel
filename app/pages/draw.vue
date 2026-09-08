@@ -1,137 +1,145 @@
 <script setup>
 /**
- * Режим 1: игроку выпадает слово, он рисует, сеть распознаёт холст в реальном времени.
+ * Режим 1: игроку выпадает слово, он рисует, сеть распознаёт холст.
+ *
+ * Сеть намеренно «заторможена»: она смотрит на холст не после каждого штриха,
+ * а раз в difficulty.think миллисекунд, и должна узнать слово несколько
+ * проверок подряд (difficulty.holdFrames). Без этого она угадывает мгновенно
+ * и играть неинтересно.
  */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { CATEGORIES } from '~~/shared/categories.js'
 
 useHead({ title: 'Ты рисуешь — ИИ угадывает · Sketch Duel' })
 
-const ROUND_MS = 20000
-const WIN_P = 0.55 // уверенность, при которой засчитываем «угадал»
-const THROTTLE_MS = 90
-
 const clf = useClassifier()
+const { difficultyId, difficulty, pool, setDifficulty } = useGameSettings()
 const pad = ref(null)
 
-const state = ref('loading') // loading | ready | playing | won | lost
+const state = ref('loading') // loading | playing | won | lost | error
 const target = ref(null)
 const guesses = ref([])
-const timeLeft = ref(ROUND_MS)
+const targetP = ref(0)
+const timeLeft = ref(0)
+const thinking = ref(false)
+const holdCount = ref(0)
 const score = ref(0)
 const streak = ref(0)
 const bestStreak = ref(0)
 const rounds = ref(0)
 const wins = ref(0)
+const lastPoints = ref(0)
 const loadError = ref(null)
 const recent = []
 
 let timer = null
-let lastRun = 0
-let pending = null
+let brain = null
+let thinkFlash = null
 let roundStartedAt = 0
 let hiddenAt = 0
 
+const RING = 2 * Math.PI * 26
+
 const secondsLeft = computed(() => Math.max(0, timeLeft.value / 1000))
-const timePct = computed(() => Math.max(0, Math.min(100, (timeLeft.value / ROUND_MS) * 100)))
-const targetP = ref(0) // вероятность именно загаданного класса, даже если он не в топ-3
+const timeFrac = computed(() =>
+  difficulty.value.roundMs ? Math.max(0, Math.min(1, timeLeft.value / difficulty.value.roundMs)) : 0
+)
+const winP = computed(() => difficulty.value.winP)
+const holdNeeded = computed(() => difficulty.value.holdFrames)
+const playing = computed(() => state.value === 'playing')
+const hurry = computed(() => playing.value && secondsLeft.value <= 5)
 
 function pickTarget() {
-  const pool = CATEGORIES.filter((c) => !recent.includes(c.key))
-  const c = pool[Math.floor(Math.random() * pool.length)]
+  const list = pool.value
+  const free = list.filter((c) => !recent.includes(c.key))
+  const from = free.length ? free : list
+  const c = from[Math.floor(Math.random() * from.length)]
   recent.push(c.key)
-  if (recent.length > 8) recent.shift()
+  if (recent.length > Math.min(12, Math.floor(list.length / 2))) recent.shift()
   return c
 }
 
+function stopTimers() {
+  if (timer) clearInterval(timer)
+  if (brain) clearInterval(brain)
+  if (thinkFlash) clearTimeout(thinkFlash)
+  timer = brain = thinkFlash = null
+}
+
 function startRound() {
+  stopTimers()
   target.value = pickTarget()
   guesses.value = []
   targetP.value = 0
-  timeLeft.value = ROUND_MS
+  holdCount.value = 0
+  thinking.value = false
+  timeLeft.value = difficulty.value.roundMs
   state.value = 'playing'
   pad.value?.clear()
-  stopTimer()
+
   roundStartedAt = Date.now()
   hiddenAt = 0
   timer = setInterval(() => {
     if (document.hidden) return
-    timeLeft.value = ROUND_MS - (Date.now() - roundStartedAt)
+    timeLeft.value = difficulty.value.roundMs - (Date.now() - roundStartedAt)
     if (timeLeft.value <= 0) {
       timeLeft.value = 0
       finishRound(false)
     }
   }, 100)
-}
 
-function stopTimer() {
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-  }
+  brain = setInterval(look, difficulty.value.think)
 }
 
 function finishRound(won) {
-  stopTimer()
+  stopTimers()
+  thinking.value = false
   rounds.value++
   if (won) {
     wins.value++
-    // Чем быстрее — тем больше очков: от 100 (мгновенно) до 20 (в последнюю секунду).
-    score.value += Math.round(20 + 80 * (timeLeft.value / ROUND_MS))
+    lastPoints.value = Math.round(20 + 80 * timeFrac.value)
+    score.value += lastPoints.value
     streak.value++
     bestStreak.value = Math.max(bestStreak.value, streak.value)
     state.value = 'won'
   } else {
+    lastPoints.value = 0
     streak.value = 0
     state.value = 'lost'
   }
 }
 
-function runRecognition() {
-  if (state.value !== 'playing') return
+/** Один «взгляд» сети на холст. */
+function look() {
+  if (!playing.value || document.hidden) return
   const strokes = pad.value?.getStrokes() ?? []
   if (!strokes.length) {
     guesses.value = []
     targetP.value = 0
+    holdCount.value = 0
     return
   }
+  thinking.value = true
   const { top, probOf } = clf.analyze(strokes, 3)
   guesses.value = top
   targetP.value = probOf(target.value.key)
-  if (top[0] && top[0].key === target.value.key && top[0].p >= WIN_P) finishRound(true)
-}
 
-/** Троттлинг: распознавание дешёвое (~0.3 мс), но незачем гонять его на каждое движение мыши. */
-function onCanvasChange() {
-  if (state.value !== 'playing') return
-  const now = performance.now()
-  if (now - lastRun >= THROTTLE_MS) {
-    lastRun = now
-    runRecognition()
-  } else if (!pending) {
-    pending = setTimeout(() => {
-      pending = null
-      lastRun = performance.now()
-      runRecognition()
-    }, THROTTLE_MS - (now - lastRun))
+  const sure = top[0] && top[0].key === target.value.key && top[0].p >= winP.value
+  holdCount.value = sure ? holdCount.value + 1 : 0
+  if (holdCount.value >= holdNeeded.value) {
+    finishRound(true)
+    return
   }
+  if (thinkFlash) clearTimeout(thinkFlash)
+  thinkFlash = setTimeout(() => (thinking.value = false), 200)
 }
 
 function clearCanvas() {
   pad.value?.clear()
   guesses.value = []
   targetP.value = 0
+  holdCount.value = 0
 }
 
-function skip() {
-  if (state.value !== 'playing') return
-  finishRound(false)
-}
-
-/**
- * Пока вкладка скрыта, браузер душит таймеры, а игрок всё равно не видит холст.
- * Поэтому просто не засчитываем это время: возвращаемся к раунду там же, где ушли.
- */
 function onVisibility() {
   if (document.hidden) {
     hiddenAt = Date.now()
@@ -142,18 +150,21 @@ function onVisibility() {
 }
 
 function onKey(e) {
-  if (e.key === 'Enter' || e.code === 'Space') {
-    if (state.value === 'won' || state.value === 'lost' || state.value === 'ready') {
-      e.preventDefault()
-      startRound()
-    }
+  if (e.target instanceof HTMLElement && ['INPUT', 'BUTTON', 'A'].includes(e.target.tagName)) return
+  if ((e.key === 'Enter' || e.code === 'Space') && (state.value === 'won' || state.value === 'lost')) {
+    e.preventDefault()
+    startRound()
   }
+}
+
+function changeDifficulty(id) {
+  setDifficulty(id)
+  if (state.value !== 'loading' && state.value !== 'error') startRound()
 }
 
 onMounted(async () => {
   try {
     await clf.ensureLoaded()
-    state.value = 'ready'
     startRound()
   } catch (e) {
     loadError.value = e.message || String(e)
@@ -164,8 +175,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  stopTimer()
-  if (pending) clearTimeout(pending)
+  stopTimers()
   window.removeEventListener('keydown', onKey)
   document.removeEventListener('visibilitychange', onVisibility)
 })
@@ -173,188 +183,251 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="wrap">
-    <header class="topbar">
-      <NuxtLink to="/" class="brand"><span class="dot" /> Sketch Duel</NuxtLink>
-      <div class="spacer" />
-      <span class="pill">🏆 {{ score }}</span>
-      <span class="pill">🔥 серия {{ streak }}</span>
-      <span class="pill">{{ wins }} / {{ rounds }}</span>
-      <NuxtLink to="/guess" class="btn ghost">Другой режим</NuxtLink>
-    </header>
+    <AppHeader mode="draw">
+      <span class="pill">🏆 <b>{{ score }}</b></span>
+      <span class="pill">🔥 <b>{{ streak }}</b></span>
+      <span class="pill">✅ <b>{{ wins }}/{{ rounds }}</b></span>
+    </AppHeader>
 
-    <div v-if="state === 'error'" class="card err">
+    <div v-if="state === 'error'" class="card notice">
       <h3>Модель не загрузилась</h3>
       <p class="muted">{{ loadError }}</p>
-      <p class="muted">Собери артефакты командой <code>npm run data:all</code> и перезагрузи страницу.</p>
+      <p class="dim">Собери артефакты командой <code>npm run data:all</code> и обнови страницу.</p>
     </div>
 
-    <div v-else-if="state === 'loading'" class="card err">
+    <div v-else-if="state === 'loading'" class="card notice">
       <h3>Загружаю нейросеть…</h3>
-      <p class="muted">240 КБ весов, дальше всё считается офлайн.</p>
+      <p class="muted">Около 300 КБ весов. Дальше всё считается прямо в браузере, офлайн.</p>
     </div>
 
     <div v-else class="game">
-      <div class="left">
+      <div class="game__main">
         <div class="task card">
-          <div>
-            <div class="task-label">нарисуй</div>
-            <div class="task-word">{{ target?.emoji }} {{ target?.ru }}</div>
+          <div class="task__word">
+            <div class="task__label">нарисуй</div>
+            <div class="task__value">
+              <span aria-hidden="true">{{ target?.emoji }}</span> {{ target?.ru }}
+            </div>
           </div>
-          <div class="clock" :class="{ hurry: secondsLeft <= 5 && state === 'playing' }">
-            {{ secondsLeft.toFixed(1) }}<small>с</small>
+
+          <div class="timer">
+            <svg class="ring" viewBox="0 0 60 60" aria-hidden="true">
+              <circle class="ring__bg" cx="30" cy="30" r="26" />
+              <circle
+                class="ring__fg"
+                :class="{ 'is-hurry': hurry }"
+                cx="30"
+                cy="30"
+                r="26"
+                :stroke-dasharray="RING"
+                :stroke-dashoffset="RING * (1 - timeFrac)"
+              />
+            </svg>
+            <div class="timer__num" :class="{ 'is-hurry': hurry }">
+              {{ secondsLeft.toFixed(1) }}
+            </div>
           </div>
         </div>
-        <div class="timebar"><i :style="{ width: timePct + '%' }" /></div>
 
-        <SketchPad ref="pad" :disabled="state !== 'playing'" @change="onCanvasChange" />
+        <SketchPad ref="pad" :disabled="!playing" />
 
         <div class="tools">
-          <button class="btn" :disabled="state !== 'playing'" @click="pad?.undo()">↩ Отменить</button>
-          <button class="btn" :disabled="state !== 'playing'" @click="clearCanvas">🗑 Очистить</button>
+          <button class="btn" :disabled="!playing" @click="pad?.undo()">↩ Отменить</button>
+          <button class="btn" :disabled="!playing" @click="clearCanvas">🗑 Очистить</button>
           <div class="spacer" />
-          <button v-if="state === 'playing'" class="btn ghost" @click="skip">Сдаюсь →</button>
-          <button v-else class="btn primary" @click="startRound">Следующий раунд →</button>
+          <button v-if="playing" class="btn btn--ghost" @click="finishRound(false)">Сдаюсь</button>
+          <button v-else class="btn btn--primary btn--lg" @click="startRound">
+            Следующий раунд →
+          </button>
         </div>
       </div>
 
-      <aside class="right">
+      <aside class="game__side">
         <div class="card panel">
-          <h3>ИИ видит</h3>
+          <div class="panel__head">
+            <h3>ИИ видит</h3>
+            <span class="think" :class="{ 'is-on': thinking }" aria-hidden="true">
+              <i /><i /><i />
+            </span>
+          </div>
+
           <TransitionGroup name="g" tag="div" class="guesses">
-            <div v-for="(g, i) in guesses" :key="g.key" class="guess" :class="{ hit: g.key === target?.key }">
-              <span class="rank">{{ i + 1 }}</span>
-              <span class="name">{{ g.emoji }} {{ g.ru }}</span>
-              <span class="pct">{{ Math.round(g.p * 100) }}%</span>
-              <i class="bar" :style="{ width: Math.max(2, g.p * 100) + '%' }" />
+            <div
+              v-for="(g, i) in guesses"
+              :key="g.key"
+              class="guess"
+              :class="{ 'is-hit': g.key === target?.key }"
+            >
+              <span class="guess__rank">{{ i + 1 }}</span>
+              <span class="guess__name">
+                <span aria-hidden="true">{{ g.emoji }}</span> {{ g.ru }}
+              </span>
+              <span class="guess__pct">{{ Math.round(g.p * 100) }}%</span>
+              <i class="guess__bar" :style="{ width: Math.max(2, g.p * 100) + '%' }" />
             </div>
           </TransitionGroup>
-          <p v-if="!guesses.length" class="muted empty">
-            {{ state === 'playing' ? 'Холст пустой — сеть ждёт первый штрих.' : 'Раунд окончен.' }}
+
+          <p v-if="!guesses.length" class="panel__empty dim">
+            {{ playing ? 'Холст пустой — сеть ждёт первый штрих.' : 'Раунд окончен.' }}
           </p>
 
-          <div class="progress-to-win">
-            <div class="ptw-head">
-              <span class="muted">уверенность в «{{ target?.ru }}»</span>
+          <div class="meter">
+            <div class="meter__head">
+              <span class="dim">уверенность в «{{ target?.ru }}»</span>
               <b>{{ Math.round(targetP * 100) }}%</b>
             </div>
-            <div class="ptw-bar">
-              <i :style="{ width: Math.min(100, (targetP / WIN_P) * 100) + '%' }" />
+            <div class="meter__bar">
+              <i :style="{ width: Math.min(100, (targetP / winP) * 100) + '%' }" />
             </div>
-            <div class="muted tiny">нужно {{ Math.round(WIN_P * 100) }}%, чтобы засчитать</div>
+            <div class="meter__foot dim">
+              нужно {{ Math.round(winP * 100) }}%, и подряд
+              <span class="holds" aria-hidden="true">
+                <i v-for="n in holdNeeded" :key="n" :class="{ 'is-on': holdCount >= n }" />
+              </span>
+            </div>
           </div>
         </div>
 
         <Transition name="pop">
-          <div v-if="state === 'won'" class="card verdict win">
-            <div class="big">🎉</div>
+          <div v-if="state === 'won'" class="card verdict verdict--win">
+            <div class="verdict__ico" aria-hidden="true">🎉</div>
             <h3>Угадала!</h3>
-            <p class="muted">Это точно {{ target?.emoji }} {{ target?.ru }}. Серия: {{ streak }}.</p>
-            <button class="btn primary" @click="startRound">Ещё раз</button>
+            <p class="muted">
+              Это точно {{ target?.emoji }} {{ target?.ru }}. <b>+{{ lastPoints }}</b> очков, серия
+              {{ streak }}.
+            </p>
+            <button class="btn btn--primary" @click="startRound">Ещё раз</button>
           </div>
-          <div v-else-if="state === 'lost'" class="card verdict lose">
-            <div class="big">🫤</div>
+          <div v-else-if="state === 'lost'" class="card verdict verdict--lose">
+            <div class="verdict__ico" aria-hidden="true">🫤</div>
             <h3>Не узнала</h3>
             <p class="muted">
               Загадано было «{{ target?.ru }}»<span v-if="guesses[0]">, а сеть решила, что это
-              {{ guesses[0].emoji }} {{ guesses[0].ru }}</span
+                {{ guesses[0].emoji }} {{ guesses[0].ru }}</span
               >.
             </p>
-            <button class="btn primary" @click="startRound">Дальше</button>
+            <button class="btn btn--primary" @click="startRound">Дальше</button>
           </div>
         </Transition>
 
-        <div class="card panel meta">
-          <div class="row"><span class="muted">точность модели</span><b>{{ clf.metrics() ? Math.round(clf.metrics().top1 * 100) + '%' : '—' }}</b></div>
-          <div class="row"><span class="muted">лучшая серия</span><b>{{ bestStreak }}</b></div>
-          <div class="row"><span class="muted">горячие клавиши</span><b>Ctrl+Z, Пробел</b></div>
+        <div class="card panel">
+          <h3 class="panel__title">Сложность</h3>
+          <DifficultyPicker
+            :model-value="difficultyId"
+            compact
+            @update:model-value="changeDifficulty"
+          />
+          <div class="rows">
+            <div class="row"><span class="dim">слов в игре</span><b>{{ pool.length }}</b></div>
+            <div class="row">
+              <span class="dim">точность модели</span>
+              <b>{{ clf.metrics() ? Math.round(clf.metrics().top1 * 100) + '%' : '—' }}</b>
+            </div>
+            <div class="row"><span class="dim">лучшая серия</span><b>{{ bestStreak }}</b></div>
+            <div class="row"><span class="dim">клавиши</span><b>Ctrl+Z · Пробел</b></div>
+          </div>
         </div>
       </aside>
     </div>
   </div>
 </template>
 
-<style scoped>
+<style lang="scss" scoped>
 .game {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.75fr);
   gap: 20px;
   align-items: start;
-}
 
-@media (max-width: 900px) {
-  .game {
-    /* minmax(0, 1fr), а не 1fr: иначе минимальным размером колонки становится
-       min-content её содержимого — а холст имеет заданную в пикселях ширину,
-       и колонка отказывалась сжиматься при сужении окна. */
+  @include upto($bp-md) {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.left {
+.game__main {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.game__side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   min-width: 0;
 }
 
 .task {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
-  gap: 12px;
-}
+  gap: 16px;
+  padding: 16px 20px;
 
-.task-label {
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 700;
-}
+  &__word {
+    flex: 1;
+    min-width: 0;
+  }
 
-.task-word {
-  font-size: 30px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
-}
+  &__label {
+    @include eyebrow;
+    margin: 0 0 3px;
+  }
 
-.clock {
-  font-size: 28px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
-.clock small {
-  font-size: 14px;
-  color: var(--muted);
-  margin-left: 2px;
-}
-
-.clock.hurry {
-  color: var(--bad);
-  animation: pulse 0.6s infinite alternate;
-}
-
-@keyframes pulse {
-  to {
-    opacity: 0.55;
+  &__value {
+    font-size: clamp(23px, 4vw, 31px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    @include ellipsis;
   }
 }
 
-.timebar {
-  height: 5px;
-  border-radius: 4px;
-  background: var(--panel-2);
-  overflow: hidden;
+.timer {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  flex: none;
+
+  &__num {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 15px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+
+    &.is-hurry {
+      color: $red;
+    }
+  }
 }
 
-.timebar i {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  transition: width 0.1s linear;
+.ring {
+  width: 60px;
+  height: 60px;
+  transform: rotate(-90deg);
+
+  circle {
+    fill: none;
+    stroke-width: 4;
+    stroke-linecap: round;
+  }
+
+  &__bg {
+    stroke: rgba(255, 255, 255, 0.08);
+  }
+
+  &__fg {
+    stroke: $violet-2;
+    transition:
+      stroke-dashoffset 0.12s linear,
+      stroke $med;
+
+    &.is-hurry {
+      stroke: $red;
+    }
+  }
 }
 
 .tools {
@@ -364,29 +437,60 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.right {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
-
 .panel {
-  padding: 18px 18px 20px;
+  padding: 20px;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+
+    h3 {
+      @include eyebrow;
+      margin: 0;
+    }
+  }
+
+  &__title {
+    @include eyebrow;
+  }
+
+  &__empty {
+    margin: 0;
+    font-size: 13.5px;
+  }
 }
 
-.panel h3 {
-  margin: 0 0 14px;
-  font-size: 13px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
+.think {
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity $fast;
+
+  &.is-on {
+    opacity: 1;
+  }
+
+  i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: $violet-2;
+    animation: breathe 0.5s infinite alternate;
+
+    &:nth-child(2) {
+      animation-delay: 0.12s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.24s;
+    }
+  }
 }
 
 .guesses {
-  /* Позиционированный родитель обязателен: уходящий элемент списка становится
-     absolute, и без этого он растягивался бы на всю страницу, давая горизонтальный скролл. */
-  position: relative;
+  position: relative; // держим уходящий элемент внутри панели
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -395,137 +499,166 @@ onBeforeUnmount(() => {
 .guess {
   position: relative;
   display: grid;
-  grid-template-columns: 20px 1fr auto;
+  grid-template-columns: 18px 1fr auto;
   align-items: center;
   gap: 10px;
-  padding: 11px 12px;
-  border-radius: 10px;
-  background: var(--panel-2);
+  padding: 12px 13px;
+  border-radius: $r-sm;
+  background: $surface-2;
   overflow: hidden;
-  transition: 0.2s;
+  transition: background $med;
+
+  &__rank {
+    font-size: 11px;
+    font-weight: 700;
+    color: $text-3;
+  }
+
+  &__name {
+    font-weight: 600;
+    @include ellipsis;
+  }
+
+  &__pct {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: $text-2;
+  }
+
+  &__bar {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    background: $violet;
+    transition: width $med $ease;
+  }
+
+  &.is-hit {
+    background: rgba(52, 211, 153, 0.14);
+    box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.35);
+
+    .guess__bar {
+      background: $green;
+    }
+  }
 }
 
-.guess .bar {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 3px;
-  background: var(--accent);
-  transition: width 0.15s ease;
-}
-
-.guess.hit {
-  background: rgba(47, 212, 122, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(47, 212, 122, 0.35);
-}
-
-.guess.hit .bar {
-  background: var(--good);
-}
-
-.rank {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.name {
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pct {
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  color: var(--muted);
-}
-
-.empty {
-  font-size: 14px;
-  margin: 0;
-}
-
-.progress-to-win {
+.meter {
   margin-top: 18px;
-  border-top: 1px solid var(--line);
-  padding-top: 14px;
+  padding-top: 15px;
+  border-top: 1px solid $line;
+
+  &__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+
+  &__bar {
+    height: 8px;
+    border-radius: $r-full;
+    background: $surface-2;
+    overflow: hidden;
+
+    i {
+      display: block;
+      height: 100%;
+      border-radius: $r-full;
+      background: linear-gradient(90deg, $violet, $green);
+      transition: width $med $ease;
+    }
+  }
+
+  &__foot {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 9px;
+    font-size: 12px;
+  }
 }
 
-.ptw-head {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  margin-bottom: 8px;
-}
+.holds {
+  display: inline-flex;
+  gap: 4px;
 
-.ptw-bar {
-  position: relative;
-  height: 8px;
-  border-radius: 6px;
-  background: var(--panel-2);
-  overflow: hidden;
-}
+  i {
+    width: 14px;
+    height: 4px;
+    border-radius: $r-full;
+    background: $surface-3;
+    transition: background $fast;
 
-.ptw-bar i {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--good));
-  transition: width 0.15s;
-}
-
-.tiny {
-  font-size: 12px;
-  margin-top: 6px;
+    &.is-on {
+      background: $green;
+    }
+  }
 }
 
 .verdict {
-  padding: 20px;
+  padding: 22px;
   text-align: center;
+
+  &__ico {
+    font-size: 40px;
+    line-height: 1;
+  }
+
+  h3 {
+    margin: 8px 0 5px;
+    font-size: 20px;
+  }
+
+  p {
+    margin: 0 0 15px;
+    font-size: 14px;
+  }
+
+  &--win {
+    box-shadow: $sh-md, inset 0 0 0 1px rgba(52, 211, 153, 0.4);
+  }
+
+  &--lose {
+    box-shadow: $sh-md, inset 0 0 0 1px rgba(251, 113, 133, 0.35);
+  }
 }
 
-.verdict .big {
-  font-size: 40px;
+.rows {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid $line;
 }
 
-.verdict h3 {
-  margin: 6px 0 4px;
-  font-size: 20px;
-}
-
-.verdict p {
-  margin: 0 0 14px;
-  font-size: 14px;
-}
-
-.verdict.win {
-  box-shadow: inset 0 0 0 1px rgba(47, 212, 122, 0.4);
-}
-
-.verdict.lose {
-  box-shadow: inset 0 0 0 1px rgba(255, 93, 108, 0.35);
-}
-
-.meta .row {
+.row {
   display: flex;
   justify-content: space-between;
-  padding: 7px 0;
-  font-size: 13.5px;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
 }
 
-.err {
-  padding: 26px;
-}
+.notice {
+  padding: 28px;
 
-.err h3 {
-  margin: 0 0 8px;
+  h3 {
+    margin-bottom: 8px;
+  }
+
+  code {
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: $surface-3;
+    font-size: 12.5px;
+  }
 }
 
 .g-move,
 .g-enter-active,
 .g-leave-active {
-  transition: all 0.22s ease;
+  transition: all $med $ease;
 }
 
 .g-enter-from,
@@ -541,6 +674,6 @@ onBeforeUnmount(() => {
 }
 
 .pop-enter-active {
-  animation: pop 0.28s ease;
+  animation: pop $med $ease;
 }
 </style>

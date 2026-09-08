@@ -1,0 +1,211 @@
+@use 'tokens' as *;
+@use 'mixins' as *;
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#__nuxt {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: $text;
+  background:
+    radial-gradient(1100px 560px at 12% -8%, rgba(84, 68, 190, 0.35) 0%, transparent 62%),
+    radial-gradient(900px 500px at 96% 2%, rgba(150, 70, 190, 0.22) 0%, transparent 58%),
+    radial-gradient(700px 400px at 50% 100%, rgba(255, 176, 32, 0.07) 0%, transparent 60%),
+    $bg-deep;
+  background-attachment: fixed;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Ubuntu, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+::selection {
+  background: rgba(124, 92, 255, 0.35);
+}
+
+// ---------- сетка страницы ----------
+.wrap {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px 20px 56px;
+
+  @include upto($bp-sm) {
+    padding: 14px 14px 40px;
+  }
+}
+
+.spacer {
+  flex: 1;
+}
+
+.muted {
+  color: $text-2;
+}
+
+.dim {
+  color: $text-3;
+}
+
+// ---------- карточка ----------
+.card {
+  @include surface;
+  @include top-sheen;
+}
+
+// ---------- кнопка ----------
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: $r-md;
+  border: 1px solid $line-2;
+  background: $surface-2;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  transition:
+    transform $fast $ease,
+    background $fast,
+    border-color $fast,
+    box-shadow $fast;
+  @include focus-ring;
+
+  &:hover:not(:disabled) {
+    background: $surface-3;
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &--primary {
+    background: $grad-violet;
+    border-color: transparent;
+    box-shadow: $sh-glow;
+
+    &:hover:not(:disabled) {
+      background: $grad-violet;
+      filter: brightness(1.1);
+    }
+  }
+
+  &--ghost {
+    background: transparent;
+    border-color: $line;
+  }
+
+  &--lg {
+    padding: 13px 22px;
+    font-size: 15px;
+    border-radius: $r-md;
+  }
+}
+
+// ---------- пилюля-статистика ----------
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: $r-full;
+  border: 1px solid $line;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+
+  &--warn {
+    border-color: rgba(255, 176, 32, 0.45);
+    color: $amber;
+  }
+
+  b {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// ---------- анимации ----------
+@keyframes pop {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+@keyframes breathe {
+  to {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
