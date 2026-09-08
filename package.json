@@ -1,0 +1,22 @@
+{
+  "name": "sketch-duel",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "data:fetch": "node scripts/fetch-data.mjs",
+    "data:train": "node --max-old-space-size=4096 scripts/train.mjs",
+    "data:all": "npm run data:fetch && npm run data:train",
+    "verify": "node scripts/verify.mjs",
+    "test": "node scripts/verify.mjs"
+  },
+  "dependencies": {
+    "nuxt": "^4.4.5",
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.1"
+  }
+}

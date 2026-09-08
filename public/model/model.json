@@ -1,0 +1,92 @@
+{
+  "format": "mlp-int8-v1",
+  "inputSize": 784,
+  "classes": [
+    "airplane",
+    "apple",
+    "banana",
+    "bicycle",
+    "butterfly",
+    "car",
+    "cat",
+    "clock",
+    "cloud",
+    "crown",
+    "donut",
+    "envelope",
+    "eye",
+    "eyeglasses",
+    "fish",
+    "flower",
+    "hamburger",
+    "house",
+    "key",
+    "ladder",
+    "lightning",
+    "mushroom",
+    "pizza",
+    "scissors",
+    "snowman",
+    "star",
+    "sun",
+    "t-shirt",
+    "tree",
+    "umbrella"
+  ],
+  "layers": [
+    {
+      "inN": 784,
+      "outN": 256,
+      "scales": {
+        "offset": 0,
+        "bytes": 1024
+      },
+      "weights": {
+        "offset": 1024,
+        "bytes": 200704
+      },
+      "bias": {
+        "offset": 201728,
+        "bytes": 1024
+      }
+    },
+    {
+      "inN": 256,
+      "outN": 128,
+      "scales": {
+        "offset": 202752,
+        "bytes": 512
+      },
+      "weights": {
+        "offset": 203264,
+        "bytes": 32768
+      },
+      "bias": {
+        "offset": 236032,
+        "bytes": 512
+      }
+    },
+    {
+      "inN": 128,
+      "outN": 30,
+      "scales": {
+        "offset": 236544,
+        "bytes": 120
+      },
+      "weights": {
+        "offset": 236664,
+        "bytes": 3840
+      },
+      "bias": {
+        "offset": 240504,
+        "bytes": 120
+      }
+    }
+  ],
+  "activation": "relu",
+  "metrics": {
+    "top1": 0.8701111111111111,
+    "top3": 0.9585555555555556
+  },
+  "trainedAt": "2026-09-08T20:34:52.403Z"
+}
