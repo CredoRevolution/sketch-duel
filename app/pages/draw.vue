@@ -12,7 +12,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 useHead({ title: 'Ты рисуешь — ИИ угадывает · Sketch Duel' })
 
 const clf = useClassifier()
-const { difficultyId, difficulty, pool, setDifficulty } = useGameSettings()
+const { difficultyId, difficulty, drawPool, setDifficulty } = useGameSettings()
 const pad = ref(null)
 
 const state = ref('loading') // loading | playing | won | lost | error
@@ -49,7 +49,7 @@ const playing = computed(() => state.value === 'playing')
 const hurry = computed(() => playing.value && secondsLeft.value <= 5)
 
 function pickTarget() {
-  const list = pool.value
+  const list = drawPool.value
   const free = list.filter((c) => !recent.includes(c.key))
   const from = free.length ? free : list
   const c = from[Math.floor(Math.random() * from.length)]
@@ -318,7 +318,7 @@ onBeforeUnmount(() => {
             @update:model-value="changeDifficulty"
           />
           <div class="rows">
-            <div class="row"><span class="dim">слов в игре</span><b>{{ pool.length }}</b></div>
+            <div class="row"><span class="dim">слов в игре</span><b>{{ drawPool.length }}</b></div>
             <div class="row">
               <span class="dim">точность модели</span>
               <b>{{ clf.metrics() ? Math.round(clf.metrics().top1 * 100) + '%' : '—' }}</b>

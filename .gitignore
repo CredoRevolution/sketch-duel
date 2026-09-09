@@ -4,8 +4,9 @@ node_modules
 .data
 dist
 .cache
+.vercel
+.idea
+.vscode
 *.log
 .DS_Store
 .env
-
-.vercel

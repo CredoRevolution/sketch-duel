@@ -4,7 +4,9 @@
  * key   — имя категории в датасете Google (часть URL),
  * ru    — подпись в интерфейсе,
  * emoji — для карточек,
- * tier  — уровень сложности: 1 лёгкий, 2 средний, 3 сложный.
+ * tier  — уровень сложности: 1 лёгкий, 2 средний, 3 сложный,
+ * guessOnly — модель почти никогда не узнаёт это слово (см. npm run verify),
+ *             поэтому его не предлагают рисовать, но угадывать по рисунку можно.
  *
  * Модель учится сразу на всех 100 категориях. Уровень сложности не меняет
  * модель — он меняет, из какого подмножества берутся загадки и насколько
@@ -46,7 +48,7 @@ export const CATEGORIES = [
   // ---------- tier 2: обычные предметы, кое-что уже путается ----------
   { key: 'bed', ru: 'кровать', emoji: '🛏️', tier: 2 },
   { key: 'bee', ru: 'пчела', emoji: '🐝', tier: 2 },
-  { key: 'bird', ru: 'птица', emoji: '🐦', tier: 2 },
+  { key: 'bird', ru: 'птица', emoji: '🐦', tier: 2 , guessOnly: true },
   { key: 'book', ru: 'книга', emoji: '📖', tier: 2 },
   { key: 'bridge', ru: 'мост', emoji: '🌉', tier: 2 },
   { key: 'bus', ru: 'автобус', emoji: '🚌', tier: 2 },
@@ -57,7 +59,7 @@ export const CATEGORIES = [
   { key: 'chair', ru: 'стул', emoji: '🪑', tier: 2 },
   { key: 'cookie', ru: 'печенье', emoji: '🍪', tier: 2 },
   { key: 'cup', ru: 'чашка', emoji: '☕', tier: 2 },
-  { key: 'dog', ru: 'собака', emoji: '🐶', tier: 2 },
+  { key: 'dog', ru: 'собака', emoji: '🐶', tier: 2 , guessOnly: true },
   { key: 'door', ru: 'дверь', emoji: '🚪', tier: 2 },
   { key: 'duck', ru: 'утка', emoji: '🦆', tier: 2 },
   { key: 'elephant', ru: 'слон', emoji: '🐘', tier: 2 },
@@ -84,23 +86,23 @@ export const CATEGORIES = [
   { key: 'ant', ru: 'муравей', emoji: '🐜', tier: 3 },
   { key: 'backpack', ru: 'рюкзак', emoji: '🎒', tier: 3 },
   { key: 'basketball', ru: 'мяч', emoji: '🏀', tier: 3 },
-  { key: 'bear', ru: 'медведь', emoji: '🐻', tier: 3 },
+  { key: 'bear', ru: 'медведь', emoji: '🐻', tier: 3 , guessOnly: true },
   { key: 'broom', ru: 'метла', emoji: '🧹', tier: 3 },
   { key: 'cactus', ru: 'кактус', emoji: '🌵', tier: 3 },
   { key: 'castle', ru: 'замок', emoji: '🏰', tier: 3 },
   { key: 'cow', ru: 'корова', emoji: '🐮', tier: 3 },
   { key: 'crab', ru: 'краб', emoji: '🦀', tier: 3 },
   { key: 'dolphin', ru: 'дельфин', emoji: '🐬', tier: 3 },
-  { key: 'dragon', ru: 'дракон', emoji: '🐉', tier: 3 },
+  { key: 'dragon', ru: 'дракон', emoji: '🐉', tier: 3 , guessOnly: true },
   { key: 'drums', ru: 'барабаны', emoji: '🥁', tier: 3 },
-  { key: 'frog', ru: 'лягушка', emoji: '🐸', tier: 3 },
+  { key: 'frog', ru: 'лягушка', emoji: '🐸', tier: 3 , guessOnly: true },
   { key: 'giraffe', ru: 'жираф', emoji: '🦒', tier: 3 },
   { key: 'hammer', ru: 'молоток', emoji: '🔨', tier: 3 },
   { key: 'horse', ru: 'лошадь', emoji: '🐴', tier: 3 },
   { key: 'kangaroo', ru: 'кенгуру', emoji: '🦘', tier: 3 },
   { key: 'laptop', ru: 'ноутбук', emoji: '💻', tier: 3 },
   { key: 'lion', ru: 'лев', emoji: '🦁', tier: 3 },
-  { key: 'lobster', ru: 'омар', emoji: '🦞', tier: 3 },
+  { key: 'lobster', ru: 'омар', emoji: '🦞', tier: 3 , guessOnly: true },
   { key: 'octopus', ru: 'осьминог', emoji: '🐙', tier: 3 },
   { key: 'owl', ru: 'сова', emoji: '🦉', tier: 3 },
   { key: 'panda', ru: 'панда', emoji: '🐼', tier: 3 },
@@ -112,7 +114,7 @@ export const CATEGORIES = [
   { key: 'snail', ru: 'улитка', emoji: '🐌', tier: 3 },
   { key: 'teapot', ru: 'чайник', emoji: '🫖', tier: 3 },
   { key: 'telephone', ru: 'телефон', emoji: '☎️', tier: 3 },
-  { key: 'tiger', ru: 'тигр', emoji: '🐯', tier: 3 },
+  { key: 'tiger', ru: 'тигр', emoji: '🐯', tier: 3 , guessOnly: true },
   { key: 'whale', ru: 'кит', emoji: '🐳', tier: 3 },
   { key: 'windmill', ru: 'мельница', emoji: '🌬️', tier: 3 },
   { key: 'zebra', ru: 'зебра', emoji: '🦓', tier: 3 }
@@ -184,7 +186,16 @@ export function difficultyById(id) {
   return DIFFICULTIES.find((d) => d.id === id) ?? DIFFICULTIES[1]
 }
 
-/** Категории, доступные на выбранном уровне сложности. */
+/** Категории, доступные на выбранном уровне сложности (режим «угадай рисунок»). */
 export function categoriesForTier(maxTier) {
   return CATEGORIES.filter((c) => c.tier <= maxTier)
+}
+
+/**
+ * Категории, которые не стыдно попросить нарисовать.
+ * Из списка выкинуты слова, которые модель не узнаёт даже на своих же данных:
+ * просить нарисовать собаку, если сеть угадывает её в 14% случаев, — нечестно.
+ */
+export function drawableForTier(maxTier) {
+  return CATEGORIES.filter((c) => c.tier <= maxTier && !c.guessOnly)
 }

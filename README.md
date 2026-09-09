@@ -41,8 +41,6 @@ app/
   pages/                        index, draw (mode 1), guess (mode 2)
 ```
 
-A detailed walkthrough in Russian lives in [`docs/HOW-IT-WORKS.ru.md`](docs/HOW-IT-WORKS.ru.md).
-
 ### Shared preprocessing
 
 The most common reason a model like this "feels stupid" is a mismatch between how drawings were prepared during training and how they are prepared in production. Here `shared/sketch.js` is called both by `fetch-data.mjs` and by the browser, so the mismatch is impossible by construction.

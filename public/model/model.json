@@ -31,7 +31,77 @@
     "sun",
     "t-shirt",
     "tree",
-    "umbrella"
+    "umbrella",
+    "bed",
+    "bee",
+    "bird",
+    "book",
+    "bridge",
+    "bus",
+    "cake",
+    "camera",
+    "candle",
+    "carrot",
+    "chair",
+    "cookie",
+    "cup",
+    "dog",
+    "door",
+    "duck",
+    "elephant",
+    "fork",
+    "guitar",
+    "hand",
+    "hat",
+    "headphones",
+    "helicopter",
+    "ice cream",
+    "leaf",
+    "light bulb",
+    "moon",
+    "mountain",
+    "pencil",
+    "rainbow",
+    "sailboat",
+    "shoe",
+    "snake",
+    "spider",
+    "sword",
+    "ant",
+    "backpack",
+    "basketball",
+    "bear",
+    "broom",
+    "cactus",
+    "castle",
+    "cow",
+    "crab",
+    "dolphin",
+    "dragon",
+    "drums",
+    "frog",
+    "giraffe",
+    "hammer",
+    "horse",
+    "kangaroo",
+    "laptop",
+    "lion",
+    "lobster",
+    "octopus",
+    "owl",
+    "panda",
+    "penguin",
+    "piano",
+    "rabbit",
+    "shark",
+    "skull",
+    "snail",
+    "teapot",
+    "telephone",
+    "tiger",
+    "whale",
+    "windmill",
+    "zebra"
   ],
   "layers": [
     {
@@ -68,25 +138,25 @@
     },
     {
       "inN": 128,
-      "outN": 30,
+      "outN": 100,
       "scales": {
         "offset": 236544,
-        "bytes": 120
+        "bytes": 400
       },
       "weights": {
-        "offset": 236664,
-        "bytes": 3840
+        "offset": 236944,
+        "bytes": 12800
       },
       "bias": {
-        "offset": 240504,
-        "bytes": 120
+        "offset": 249744,
+        "bytes": 400
       }
     }
   ],
   "activation": "relu",
   "metrics": {
-    "top1": 0.8701111111111111,
-    "top3": 0.9585555555555556
+    "top1": 0.68256,
+    "top3": 0.85036
   },
-  "trainedAt": "2026-09-08T20:34:52.403Z"
+  "trainedAt": "2026-09-09T00:22:27.669Z"
 }
